@@ -1,0 +1,44 @@
+name: Slå ihop kalendrar (ICS → combined.ics)
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"   # var 30:e minut
+  workflow_dispatch:
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install deps
+        run: python - << 'PY'
+import sys
+print("No extra deps needed")
+PY
+
+      - name: Merge ICS feeds
+        env:
+          ICS_URLS: ${{ secrets.ICS_URLS }}
+          MERGE_NAME: ${{ secrets.MERGE_NAME }}
+          OUT_ICS: combined.ics
+        run: python merge_ics.py
+
+      - name: Commit if changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain combined.ics)" ]; then
+            git add combined.ics
+            git commit -m "Update combined.ics"
+            git push
+          else
+            echo "No changes."
+          fi
