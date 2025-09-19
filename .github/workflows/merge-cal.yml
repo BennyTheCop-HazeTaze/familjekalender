@@ -2,7 +2,7 @@ name: Slå ihop kalendrar (ICS → combined.ics)
 
 on:
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "*/30 * * * *"   # kör var 30:e minut
   workflow_dispatch:
 
 jobs:
@@ -11,7 +11,8 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -23,8 +24,9 @@ jobs:
 
       - name: Merge ICS feeds
         env:
-          ICS_URLS: ${{ secrets.ICS_URLS }}
-          MERGE_NAME: ${{ secrets.MERGE_NAME }}
+          ICS_URLS: ${{ secrets.ICS_URLS }}       # 4 st URL:er, en per rad
+          CAL_LABELS: ${{ secrets.CAL_LABELS }}   # 4 st labels, en per rad (Harald, Familj, Helena, Viggo Aktiviteter)
+          MERGE_NAME: ${{ secrets.MERGE_NAME }}   # valfritt (annars default i scriptet)
           OUT_ICS: combined.ics
         run: python merge_ics.py
 
