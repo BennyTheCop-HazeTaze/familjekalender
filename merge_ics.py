@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Slår ihop flera ICS-flöden till en (combined.ics) och prefixar SUMMARY med
-etiketter per källkalender.
+Slår ihop flera ICS-flöden till en (combined.ics) och prefixar SUMMARY
+med etiketter per källkalender. Fixar även å/ä/ö-mojibake från vissa flöden.
 
 Env:
   ICS_URLS   = iCal-URL:er, en per rad (ordningen används för labeling)
@@ -49,31 +49,43 @@ def extract_dtstart(evt: str) -> str:
     return m.group(1).strip() if m else "99999999T000000Z"
 
 def fetch(url: str) -> str:
-    r = requests.get(url, timeout=45, headers={"User-Agent":"ICS-Merger/1.1"})
+    r = requests.get(url, timeout=45, headers={"User-Agent":"ICS-Merger/1.2"})
     r.raise_for_status()
-    return r.text
+    raw = r.content  # bytes, inte r.text (vi bestämmer kodning själva)
+    # Försök i denna ordning för att undvika mojibake (SportAdmin m.fl.)
+    for enc in ("utf-8-sig", "utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 def get_calendar_name(ics_text: str) -> str | None:
-    # För fallback-namn om CAL_LABELS saknas eller är för kort
-    # Sök X-WR-CALNAME eller PRODID som nödfallback
     m = re.search(r"\nX-WR-CALNAME:(.+)", ics_text)
     if m:
         return m.group(1).strip()
     m = re.search(r"\nPRODID:(.+)", ics_text)
     return m.group(1).strip() if m else None
 
+def _demojibake(s: str) -> str:
+    # Rätta typisk UTF8->latin1-mojibake: "GrÃ¶t" -> "Gröt"
+    if "Ã" in s or "Â" in s:
+        try:
+            return s.encode("latin-1").decode("utf-8")
+        except Exception:
+            return s
+    return s
+
 def add_prefix_to_summary(evt: str, label: str | None) -> str:
-    if not label:
-        return evt
-    # Hitta SUMMARY-raden, hantera parametrar (t.ex. SUMMARY;LANGUAGE=sv:Text)
-    # Vi har redan unfold:ad rader, så värdet ligger på samma rad.
+    # Avmoba mojibake i SUMMARY och lägg ev. label-prefix
     def repl(m):
-        head = m.group(1)  # "SUMMARY" med ev. parametrar och kolon
-        val  = m.group(2)  # själva texten
-        # Undvik dubbelt prefix om det redan finns
-        if val.startswith(f"[{label}] ") or re.match(r"^\[[^\]]+\]\s", val):
-            return f"{head}{val}"
-        return f"{head}[{label}] {val}"
+        head, val = m.group(1), m.group(2)
+        val = _demojibake(val)
+        if label:
+            if val.startswith(f"[{label}] ") or re.match(r"^\[[^\]]+\]\s", val):
+                return f"{head}{val}"
+            val = f"[{label}] {val}"
+        return f"{head}{val}"
     return re.sub(r"(?m)^(SUMMARY[^\n:]*:)(.*)$", repl, evt, count=1)
 
 def build_calendar(name: str, events_sorted: list[str]) -> str:
@@ -112,12 +124,11 @@ def main():
             print(f"VARNING: kunde inte hämta {u}: {e}", file=sys.stderr)
             continue
 
-        # Bestäm label för denna källa
+        # Label för denna källa
         label = labels[idx] if idx < len(labels) else (get_calendar_name(txt) or None)
 
         evts = parse_events(txt)
         for e in evts:
-            # dedup på UID (för multikalender-inbjudningar mm)
             uid = extract_uid(e) or f"NOUID-{hash(e)}"
             if uid in seen:
                 continue
@@ -126,7 +137,6 @@ def main():
             e2 = add_prefix_to_summary(e, label)
             all_events.append(e2)
 
-    # sortera på DTSTART
     all_events.sort(key=lambda e: extract_dtstart(e))
 
     cal = build_calendar(out_name, all_events)
